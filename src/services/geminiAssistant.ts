@@ -11,11 +11,6 @@ import {
 import type { MenuFixture, Order } from "@/types/order";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
-export const FALLBACK_GEMINI_MODELS = [
-  "gemini-3.8-flash",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-];
 
 export interface GeminiAssistantResult {
   reply: string;
@@ -289,33 +284,101 @@ async function callGeminiApi(
   return data;
 }
 
+interface GeminiModelsListResponse {
+  models?: Array<{
+    name?: string;
+    supportedGenerationMethods?: string[];
+  }>;
+}
+
+async function discoverAlternativeFlashModels(
+  apiKey: string,
+  excludeModel: string,
+  fetchFn: typeof fetch
+): Promise<string[]> {
+  try {
+    const res = await fetchFn(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`
+    );
+    if (!res.ok) {
+      return [];
+    }
+    const data = (await res.json().catch(() => ({}))) as GeminiModelsListResponse;
+    const models = data.models ?? [];
+    return models
+      .filter(
+        (m) =>
+          typeof m.name === "string" &&
+          /flash/i.test(m.name) &&
+          m.supportedGenerationMethods?.includes("generateContent")
+      )
+      .map((m) => m.name!.replace(/^models\//, ""))
+      .filter((name) => name !== excludeModel);
+  } catch {
+    return [];
+  }
+}
+
+function waitMs(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function callGeminiWithFallback(
   apiKey: string,
   requestedModel: string,
   contents: GeminiContent[],
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  retryDelayMs = 600
 ): Promise<GeminiApiResponse> {
-  const candidates =
-    requestedModel === DEFAULT_GEMINI_MODEL
-      ? FALLBACK_GEMINI_MODELS
-      : [requestedModel];
+  let primaryError: AssistantError | null = null;
 
-  let lastError: unknown;
-  for (const candidateModel of candidates) {
+  // Attempt 1 & quick retry on transient 503 high demand
+  for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      return await callGeminiApi(apiKey, candidateModel, contents, fetchFn);
+      return await callGeminiApi(apiKey, requestedModel, contents, fetchFn);
     } catch (err) {
-      lastError = err;
-      if (
-        err instanceof AssistantError &&
-        err.code === "MODEL_UNAVAILABLE"
-      ) {
-        continue;
+      if (!(err instanceof AssistantError) || err.code !== "MODEL_UNAVAILABLE") {
+        throw err;
       }
-      throw err;
+      primaryError = err;
+      if (attempt === 0) {
+        await waitMs(retryDelayMs);
+      }
     }
   }
-  throw lastError;
+
+  // If primary model is still unavailable, discover active Flash models for this key
+  if (requestedModel === DEFAULT_GEMINI_MODEL) {
+    const alternatives = await discoverAlternativeFlashModels(
+      apiKey,
+      requestedModel,
+      fetchFn
+    );
+    for (const altModel of alternatives) {
+      try {
+        return await callGeminiApi(apiKey, altModel, contents, fetchFn);
+      } catch (err) {
+        if (
+          err instanceof AssistantError &&
+          err.code === "MODEL_UNAVAILABLE"
+        ) {
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  throw (
+    primaryError ??
+    new AssistantError(
+      "MODEL_UNAVAILABLE",
+      "Gemini Flash is temporarily busy. Please try again in a few seconds."
+    )
+  );
 }
 
 export interface AskSalesAssistantParams {
@@ -325,6 +388,7 @@ export interface AskSalesAssistantParams {
   apiKey?: string;
   model?: string;
   fetchFn?: typeof fetch;
+  retryDelayMs?: number;
 }
 
 export async function askSalesAssistant({
@@ -334,6 +398,7 @@ export async function askSalesAssistant({
   apiKey = import.meta.env.VITE_GEMINI_API_KEY,
   model = DEFAULT_GEMINI_MODEL,
   fetchFn = fetch,
+  retryDelayMs = 600,
 }: AskSalesAssistantParams): Promise<GeminiAssistantResult> {
   const trimmedKey = apiKey?.trim();
   if (!trimmedKey) {
@@ -361,7 +426,8 @@ export async function askSalesAssistant({
       trimmedKey,
       model,
       contents,
-      fetchFn
+      fetchFn,
+      retryDelayMs
     );
     const parts = res.candidates?.[0]?.content?.parts ?? [];
     const functionCalls = parts.filter((p) => Boolean(p.functionCall));

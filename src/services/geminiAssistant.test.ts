@@ -241,9 +241,10 @@ describe("Gemini Sales Assistant service", () => {
     expect(result.reply.toLowerCase()).toContain("not stored");
   });
 
-  it("falls back automatically when primary Flash model returns 503 high demand", async () => {
+  it("retries on 503 high demand and discovers alternative flash models if still unavailable", async () => {
     const mockFetch = vi
       .fn()
+      // Primary attempt 1 -> 503
       .mockResolvedValueOnce({
         ok: false,
         status: 503,
@@ -254,6 +255,35 @@ describe("Gemini Sales Assistant service", () => {
           },
         }),
       })
+      // Primary retry -> 503
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: {
+            status: "UNAVAILABLE",
+            message: "This model is currently experiencing high demand.",
+          },
+        }),
+      })
+      // Model discovery -> returns an active flash model
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [
+            {
+              name: "models/gemini-3.8-flash",
+              supportedGenerationMethods: ["generateContent"],
+            },
+            {
+              name: "models/gemini-3.5-flash",
+              supportedGenerationMethods: ["generateContent"],
+            },
+          ],
+        }),
+      })
+      // Fallback call succeeds
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -275,9 +305,10 @@ describe("Gemini Sales Assistant service", () => {
       menu: MENU_FIXTURE,
       apiKey: "test-key",
       fetchFn: mockFetch as unknown as typeof fetch,
+      retryDelayMs: 0,
     });
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
     expect(result.reply).toContain("Customer data is not stored");
   });
 });
