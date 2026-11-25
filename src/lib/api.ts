@@ -18,6 +18,7 @@ export interface ApiErrorPayload {
   shortages?: StockShortage[];
   cart?: CartState;
   remainingStock?: Record<string, number>;
+  soldByIngredient?: Record<string, number>;
   pricing?: CartPricingResult;
   serverTime?: string;
 }
@@ -65,6 +66,7 @@ export interface MenuResponse {
 export interface CartResponse {
   cart: CartState;
   remainingStock: Record<string, number>;
+  soldByIngredient: Record<string, number>;
   pricing: CartPricingResult;
   serverTime: string;
 }
@@ -87,6 +89,8 @@ export interface CheckoutResponse {
   order: Order;
   cart: CartState;
   remainingStock: Record<string, number>;
+  soldByIngredient: Record<string, number>;
+  pricing: CartPricingResult;
   orders: Order[];
   serverTime: string;
 }

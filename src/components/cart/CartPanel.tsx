@@ -260,35 +260,6 @@ export function CartPanel({
             })}
           </ul>
         )}
-
-        {cartPricing && cart.items.some((i) => i.status === "active") && (
-          <div className="space-y-1.5 border-t border-slate-200 pt-3 text-xs text-slate-700">
-            <div className="flex justify-between">
-              <span>Active Subtotal</span>
-              <span>{formatPoishaAsBdt(cartPricing.pricing.subtotalPoisha)}</span>
-            </div>
-            {cartPricing.pricing.cartDiscountPoisha > 0 && (
-              <div className="flex justify-between text-emerald-700">
-                <span>Discount ({cartPricing.pricing.appliedPromoId})</span>
-                <span>
-                  -{formatPoishaAsBdt(cartPricing.pricing.cartDiscountPoisha)}
-                </span>
-              </div>
-            )}
-            <div className="flex justify-between">
-              <span>VAT ({menu.promos.vatPercent}%)</span>
-              <span>{formatPoishaAsBdt(cartPricing.pricing.vatPoisha)}</span>
-            </div>
-            <div className="flex justify-between text-sm font-bold text-slate-900">
-              <span>Payable</span>
-              <span>
-                {formatPoishaAsBdt(cartPricing.pricing.payablePoisha, {
-                  decimals: 0,
-                })}
-              </span>
-            </div>
-          </div>
-        )}
       </CardContent>
     </Card>
   );

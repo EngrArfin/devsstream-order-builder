@@ -1,7 +1,9 @@
 import { Clock, Package } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CartPanel } from "@/components/cart/CartPanel";
+import { CheckoutPanel } from "@/components/checkout/CheckoutPanel";
 import { OrderBuilder } from "@/components/order-builder/OrderBuilder";
+import { OrdersPanel } from "@/components/orders/OrdersPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CartPricingResult } from "@/engine/pricing";
 import { getDhakaTimeParts } from "@/engine/pricing";
@@ -14,6 +16,9 @@ import {
   deleteCartItem,
   fetchCart,
   fetchMenu,
+  fetchOrders,
+  setCartCoupon,
+  submitCheckout,
   updateCartItem,
 } from "@/lib/api";
 import type {
@@ -21,6 +26,8 @@ import type {
   CartState,
   ConfigSelections,
   MenuFixture,
+  Order,
+  PaymentMethod,
 } from "@/types/order";
 
 function makeIdempotencyKey(): string {
@@ -41,6 +48,7 @@ export default function Home() {
     Record<string, number>
   >({});
   const [cartPricing, setCartPricing] = useState<CartPricingResult | null>(null);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loadingMenu, setLoadingMenu] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -54,21 +62,30 @@ export default function Home() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
   const [cartError, setCartError] = useState<string | null>(null);
+  const [couponUpdating, setCouponUpdating] = useState<boolean>(false);
+  const [paying, setPaying] = useState<boolean>(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [lastCreatedOrder, setLastCreatedOrder] = useState<Order | null>(null);
 
   const pendingAddKeyRef = useRef<string>(makeIdempotencyKey());
+  const pendingCheckoutKeyRef = useRef<string>(makeIdempotencyKey());
   const syncedExpiredIdsRef = useRef<Set<string>>(new Set());
   const { serverNowMs, syncServerTime } = useServerClock();
 
-  const loadInitialMenu = useCallback(async () => {
+  const loadInitialData = useCallback(async () => {
     setLoadingMenu(true);
     setLoadError(null);
     try {
-      const data = await fetchMenu();
-      setMenu(data.menu);
-      setCart(data.cart);
-      setSoldByIngredient(data.soldByIngredient);
-      setCartPricing(data.pricing);
-      syncServerTime(data.serverTime);
+      const [menuData, ordersData] = await Promise.all([
+        fetchMenu(),
+        fetchOrders(),
+      ]);
+      setMenu(menuData.menu);
+      setCart(menuData.cart);
+      setSoldByIngredient(menuData.soldByIngredient);
+      setCartPricing(menuData.pricing);
+      setOrders(ordersData.orders);
+      syncServerTime(menuData.serverTime);
     } catch (err) {
       setLoadError(
         err instanceof Error ? err.message : "Failed to load menu data."
@@ -79,8 +96,8 @@ export default function Home() {
   }, [syncServerTime]);
 
   useEffect(() => {
-    void loadInitialMenu();
-  }, [loadInitialMenu]);
+    void loadInitialData();
+  }, [loadInitialData]);
 
   // Auto-sync with server when any active item passes its server-time expiry
   useEffect(() => {
@@ -101,6 +118,7 @@ export default function Home() {
     void fetchCart()
       .then((res) => {
         setCart(res.cart);
+        setSoldByIngredient(res.soldByIngredient);
         setCartPricing(res.pricing);
         syncServerTime(res.serverTime);
 
@@ -184,6 +202,8 @@ export default function Home() {
     setSubmitting(true);
     setSubmitError(null);
     setCartError(null);
+    setCheckoutError(null);
+    setLastCreatedOrder(null);
 
     try {
       if (editingItemId) {
@@ -193,11 +213,13 @@ export default function Home() {
           expectedVersion: cart.version,
         });
         setCart(res.cart);
+        setSoldByIngredient(res.soldByIngredient);
         setCartPricing(res.pricing);
         syncServerTime(res.serverTime);
         setEditingItemId(null);
         setExpiredEditNotice(null);
         pendingAddKeyRef.current = makeIdempotencyKey();
+        pendingCheckoutKeyRef.current = makeIdempotencyKey();
         setSelections({});
         setQuantity(1);
       } else {
@@ -208,10 +230,12 @@ export default function Home() {
           expectedVersion: cart.version,
         });
         setCart(res.cart);
+        setSoldByIngredient(res.soldByIngredient);
         setCartPricing(res.pricing);
         syncServerTime(res.serverTime);
         setExpiredEditNotice(null);
         pendingAddKeyRef.current = makeIdempotencyKey();
+        pendingCheckoutKeyRef.current = makeIdempotencyKey();
         setSelections({});
         setQuantity(1);
       }
@@ -219,6 +243,9 @@ export default function Home() {
       if (err instanceof ApiError) {
         if (err.payload.cart) {
           setCart(err.payload.cart);
+        }
+        if (err.payload.soldByIngredient) {
+          setSoldByIngredient(err.payload.soldByIngredient);
         }
         if (err.payload.pricing) {
           setCartPricing(err.payload.pricing);
@@ -232,7 +259,6 @@ export default function Home() {
           );
           pendingAddKeyRef.current = makeIdempotencyKey();
         } else {
-          // D1: Keep edit mode & unsaved form state intact on conflict/shortage
           setSubmitError(err.message);
         }
       } else {
@@ -265,8 +291,10 @@ export default function Home() {
           expectedVersion: cart.version,
         });
         setCart(res.cart);
+        setSoldByIngredient(res.soldByIngredient);
         setCartPricing(res.pricing);
         syncServerTime(res.serverTime);
+        pendingCheckoutKeyRef.current = makeIdempotencyKey();
         if (editingItemId === item.id) {
           setQuantity(nextQty);
         }
@@ -274,6 +302,9 @@ export default function Home() {
         if (err instanceof ApiError) {
           if (err.payload.cart) {
             setCart(err.payload.cart);
+          }
+          if (err.payload.soldByIngredient) {
+            setSoldByIngredient(err.payload.soldByIngredient);
           }
           if (err.payload.pricing) {
             setCartPricing(err.payload.pricing);
@@ -300,8 +331,10 @@ export default function Home() {
       try {
         const res = await deleteCartItem(itemId, cart.version);
         setCart(res.cart);
+        setSoldByIngredient(res.soldByIngredient);
         setCartPricing(res.pricing);
         syncServerTime(res.serverTime);
+        pendingCheckoutKeyRef.current = makeIdempotencyKey();
         if (editingItemId === itemId) {
           setEditingItemId(null);
           setSelections({});
@@ -311,6 +344,9 @@ export default function Home() {
         if (err instanceof ApiError) {
           if (err.payload.cart) {
             setCart(err.payload.cart);
+          }
+          if (err.payload.soldByIngredient) {
+            setSoldByIngredient(err.payload.soldByIngredient);
           }
           if (err.payload.pricing) {
             setCartPricing(err.payload.pricing);
@@ -325,6 +361,92 @@ export default function Home() {
       }
     },
     [busyItemId, cart.version, editingItemId, syncServerTime]
+  );
+
+  const handleApplyCoupon = useCallback(
+    async (code: string | null) => {
+      if (couponUpdating) {
+        return;
+      }
+      setCouponUpdating(true);
+      setCheckoutError(null);
+      try {
+        const res = await setCartCoupon({
+          couponCode: code,
+          expectedVersion: cart.version,
+        });
+        setCart(res.cart);
+        setSoldByIngredient(res.soldByIngredient);
+        setCartPricing(res.pricing);
+        syncServerTime(res.serverTime);
+        pendingCheckoutKeyRef.current = makeIdempotencyKey();
+      } catch (err) {
+        if (err instanceof ApiError) {
+          if (err.payload.cart) {
+            setCart(err.payload.cart);
+          }
+          if (err.payload.pricing) {
+            setCartPricing(err.payload.pricing);
+          }
+          syncServerTime(err.payload.serverTime);
+          setCheckoutError(err.message);
+        } else {
+          setCheckoutError("Failed to update coupon.");
+        }
+      } finally {
+        setCouponUpdating(false);
+      }
+    },
+    [cart.version, couponUpdating, syncServerTime]
+  );
+
+  const handleCheckout = useCallback(
+    async (paymentMethod: PaymentMethod) => {
+      if (paying) {
+        return;
+      }
+      setPaying(true);
+      setCheckoutError(null);
+      try {
+        const res = await submitCheckout({
+          paymentMethod,
+          idempotencyKey: pendingCheckoutKeyRef.current,
+          couponCode: cart.couponCode,
+          expectedVersion: cart.version,
+        });
+        setCart(res.cart);
+        setSoldByIngredient(res.soldByIngredient);
+        setCartPricing(res.pricing);
+        setOrders(res.orders);
+        setLastCreatedOrder(res.order);
+        syncServerTime(res.serverTime);
+        pendingCheckoutKeyRef.current = makeIdempotencyKey();
+        if (editingItemId) {
+          setEditingItemId(null);
+          setSelections({});
+          setQuantity(1);
+        }
+      } catch (err) {
+        if (err instanceof ApiError) {
+          if (err.payload.cart) {
+            setCart(err.payload.cart);
+          }
+          if (err.payload.soldByIngredient) {
+            setSoldByIngredient(err.payload.soldByIngredient);
+          }
+          if (err.payload.pricing) {
+            setCartPricing(err.payload.pricing);
+          }
+          syncServerTime(err.payload.serverTime);
+          setCheckoutError(err.message);
+        } else {
+          setCheckoutError("Checkout failed. Please retry.");
+        }
+      } finally {
+        setPaying(false);
+      }
+    },
+    [cart.couponCode, cart.version, editingItemId, paying, syncServerTime]
   );
 
   const remainingStock = useMemo(() => {
@@ -380,79 +502,95 @@ export default function Home() {
           {loadError ?? "Menu unavailable."}
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-12">
-          <div className="lg:col-span-8">
-            <OrderBuilder
-              menu={menu}
-              selections={selections}
-              quantity={quantity}
-              cartItems={cart.items}
-              soldByIngredient={soldByIngredient}
-              editingItemId={editingItemId}
-              expiredEditNotice={expiredEditNotice}
-              pricePreview={pricePreview.pricing}
-              priceLoading={pricePreview.loading}
-              priceError={pricePreview.error}
-              submitError={submitError}
-              submitting={submitting}
-              onChangeQuantity={handleChangeQuantity}
-              onChangeOptionQty={handleChangeOptionQty}
-              onResetDraft={handleResetDraft}
-              onRetryPrice={pricePreview.retry}
-              onSubmitItem={handleSubmitBuilder}
-              onCancelEdit={handleCancelEdit}
-            />
+        <div className="space-y-8">
+          <div className="grid gap-6 lg:grid-cols-12">
+            <div className="lg:col-span-8">
+              <OrderBuilder
+                menu={menu}
+                selections={selections}
+                quantity={quantity}
+                cartItems={cart.items}
+                soldByIngredient={soldByIngredient}
+                editingItemId={editingItemId}
+                expiredEditNotice={expiredEditNotice}
+                pricePreview={pricePreview.pricing}
+                priceLoading={pricePreview.loading}
+                priceError={pricePreview.error}
+                submitError={submitError}
+                submitting={submitting}
+                onChangeQuantity={handleChangeQuantity}
+                onChangeOptionQty={handleChangeOptionQty}
+                onResetDraft={handleResetDraft}
+                onRetryPrice={pricePreview.retry}
+                onSubmitItem={handleSubmitBuilder}
+                onCancelEdit={handleCancelEdit}
+              />
+            </div>
+
+            <aside className="space-y-4 lg:col-span-4">
+              <div className="space-y-4 lg:sticky lg:top-20">
+                <CartPanel
+                  menu={menu}
+                  cart={cart}
+                  cartPricing={cartPricing}
+                  serverNowMs={serverNowMs}
+                  editingItemId={editingItemId}
+                  busyItemId={busyItemId}
+                  cartError={cartError}
+                  onEditItem={handleStartEdit}
+                  onUpdateItemQty={handleUpdateCartItemQty}
+                  onRemoveItem={handleRemoveCartItem}
+                />
+
+                <CheckoutPanel
+                  menu={menu}
+                  cart={cart}
+                  cartPricing={cartPricing}
+                  paying={paying}
+                  couponUpdating={couponUpdating}
+                  checkoutError={checkoutError}
+                  lastCreatedOrder={lastCreatedOrder}
+                  onApplyCoupon={handleApplyCoupon}
+                  onPay={handleCheckout}
+                />
+
+                {/* Live Kitchen Stock Overview */}
+                <Card className="border-slate-200/90 shadow-2xs">
+                  <CardHeader className="pb-2.5">
+                    <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                      <Package className="h-4 w-4 text-slate-500" />
+                      Shared Kitchen Stock
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-1.5">
+                      {menu.ingredients.map((ing) => {
+                        const left = remainingStock[ing.id] ?? 0;
+                        return (
+                          <span
+                            key={ing.id}
+                            data-testid={`kitchen-stock-${ing.id}`}
+                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium ${
+                              left === 0
+                                ? "border-rose-200 bg-rose-50 text-rose-700"
+                                : left <= 2
+                                  ? "border-amber-200 bg-amber-50 text-amber-800"
+                                  : "border-slate-200 bg-slate-50 text-slate-700"
+                            }`}
+                          >
+                            <span className="capitalize">{ing.name}:</span>
+                            <span className="font-bold">{left}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </aside>
           </div>
 
-          <aside className="space-y-4 lg:col-span-4">
-            <div className="space-y-4 lg:sticky lg:top-20">
-              <CartPanel
-                menu={menu}
-                cart={cart}
-                cartPricing={cartPricing}
-                serverNowMs={serverNowMs}
-                editingItemId={editingItemId}
-                busyItemId={busyItemId}
-                cartError={cartError}
-                onEditItem={handleStartEdit}
-                onUpdateItemQty={handleUpdateCartItemQty}
-                onRemoveItem={handleRemoveCartItem}
-              />
-
-              {/* Live Kitchen Stock Overview */}
-              <Card className="border-slate-200/90 shadow-2xs">
-                <CardHeader className="pb-2.5">
-                  <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                    <Package className="h-4 w-4 text-slate-500" />
-                    Shared Kitchen Stock
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-wrap gap-1.5">
-                    {menu.ingredients.map((ing) => {
-                      const left = remainingStock[ing.id] ?? 0;
-                      return (
-                        <span
-                          key={ing.id}
-                          data-testid={`kitchen-stock-${ing.id}`}
-                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium ${
-                            left === 0
-                              ? "border-rose-200 bg-rose-50 text-rose-700"
-                              : left <= 2
-                                ? "border-amber-200 bg-amber-50 text-amber-800"
-                                : "border-slate-200 bg-slate-50 text-slate-700"
-                          }`}
-                        >
-                          <span className="capitalize">{ing.name}:</span>
-                          <span className="font-bold">{left}</span>
-                        </span>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </aside>
+          <OrdersPanel orders={orders} />
         </div>
       )}
     </section>
