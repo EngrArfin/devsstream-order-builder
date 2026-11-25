@@ -1,3 +1,4 @@
+
 import {
   getAverageOrderValue,
   getBestSellingOption,
@@ -10,6 +11,11 @@ import {
 import type { MenuFixture, Order } from "@/types/order";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
+export const FALLBACK_GEMINI_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+];
 
 export interface GeminiAssistantResult {
   reply: string;
@@ -17,7 +23,13 @@ export interface GeminiAssistantResult {
 }
 
 export class AssistantError extends Error {
-  code: "MISSING_KEY" | "INVALID_KEY" | "QUOTA_EXCEEDED" | "NETWORK_ERROR" | "API_ERROR";
+  code:
+    | "MISSING_KEY"
+    | "INVALID_KEY"
+    | "QUOTA_EXCEEDED"
+    | "MODEL_UNAVAILABLE"
+    | "NETWORK_ERROR"
+    | "API_ERROR";
 
   constructor(
     code: AssistantError["code"],
@@ -256,6 +268,18 @@ async function callGeminiApi(
         "Invalid Gemini API key. Check VITE_GEMINI_API_KEY in .env.local."
       );
     }
+    if (
+      response.status === 503 ||
+      response.status === 404 ||
+      statusStr === "UNAVAILABLE" ||
+      /high demand/i.test(rawMsg) ||
+      /no longer available/i.test(rawMsg)
+    ) {
+      throw new AssistantError(
+        "MODEL_UNAVAILABLE",
+        rawMsg || `Gemini model temporarily unavailable (${response.status}).`
+      );
+    }
     throw new AssistantError(
       "API_ERROR",
       rawMsg || `Gemini API request failed (${response.status}).`
@@ -263,6 +287,35 @@ async function callGeminiApi(
   }
 
   return data;
+}
+
+async function callGeminiWithFallback(
+  apiKey: string,
+  requestedModel: string,
+  contents: GeminiContent[],
+  fetchFn: typeof fetch
+): Promise<GeminiApiResponse> {
+  const candidates =
+    requestedModel === DEFAULT_GEMINI_MODEL
+      ? FALLBACK_GEMINI_MODELS
+      : [requestedModel];
+
+  let lastError: unknown;
+  for (const candidateModel of candidates) {
+    try {
+      return await callGeminiApi(apiKey, candidateModel, contents, fetchFn);
+    } catch (err) {
+      lastError = err;
+      if (
+        err instanceof AssistantError &&
+        err.code === "MODEL_UNAVAILABLE"
+      ) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
 }
 
 export interface AskSalesAssistantParams {
@@ -304,7 +357,12 @@ export async function askSalesAssistant({
   const toolsCalled: string[] = [];
 
   for (let round = 0; round < 4; round += 1) {
-    const res = await callGeminiApi(trimmedKey, model, contents, fetchFn);
+    const res = await callGeminiWithFallback(
+      trimmedKey,
+      model,
+      contents,
+      fetchFn
+    );
     const parts = res.candidates?.[0]?.content?.parts ?? [];
     const functionCalls = parts.filter((p) => Boolean(p.functionCall));
 

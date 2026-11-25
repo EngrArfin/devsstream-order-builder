@@ -240,4 +240,44 @@ describe("Gemini Sales Assistant service", () => {
 
     expect(result.reply.toLowerCase()).toContain("not stored");
   });
+
+  it("falls back automatically when primary Flash model returns 503 high demand", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: {
+            status: "UNAVAILABLE",
+            message: "This model is currently experiencing high demand.",
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                role: "model",
+                parts: [{ text: "Customer data is not stored in orders." }],
+              },
+            },
+          ],
+        }),
+      });
+
+    const result = await askSalesAssistant({
+      question: "Who is our best customer?",
+      orders: seedOrders,
+      menu: MENU_FIXTURE,
+      apiKey: "test-key",
+      fetchFn: mockFetch as unknown as typeof fetch,
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(result.reply).toContain("Customer data is not stored");
+  });
 });

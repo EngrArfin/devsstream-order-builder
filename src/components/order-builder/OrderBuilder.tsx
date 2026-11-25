@@ -448,9 +448,9 @@ export function OrderBuilder({
         </div>
       )}
 
-      {/* Async Price Preview & Primary CTA */}
-      <Card className="border-slate-200/90 bg-white shadow-sm">
-        <CardContent className="flex flex-col gap-4 pt-6 sm:flex-row sm:items-center sm:justify-between">
+      {/* Async Price Preview & Sticky Primary CTA */}
+      <Card className="sticky bottom-3 z-20 border-slate-300/90 bg-white/95 shadow-lg backdrop-blur-md">
+        <CardContent className="flex flex-col gap-4 pt-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
               Live Item Price Preview
@@ -514,6 +514,11 @@ export function OrderBuilder({
           </div>
 
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            {!canSubmit && violations.length > 0 && !submitting && (
+              <span className="text-xs font-medium text-amber-700">
+                {violations.length} rule{violations.length === 1 ? "" : "s"} remaining
+              </span>
+            )}
             {editingItemId && onCancelEdit && (
               <Button
                 type="button"
@@ -528,7 +533,7 @@ export function OrderBuilder({
             <Button
               type="button"
               size="lg"
-              className="w-full rounded-xl bg-slate-900 px-6 font-semibold text-white shadow-sm hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 disabled:opacity-100 sm:w-auto"
+              className="w-full rounded-xl bg-slate-900 px-6 font-semibold text-white shadow-sm hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 sm:w-auto"
               onClick={onSubmitItem}
               disabled={!canSubmit}
             >
