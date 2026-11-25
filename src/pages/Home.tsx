@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SalesAssistantPanel } from "@/components/assistant/SalesAssistantPanel";
 import { CartPanel } from "@/components/cart/CartPanel";
 import { CheckoutPanel } from "@/components/checkout/CheckoutPanel";
+import { DashboardKpiBar } from "@/components/dashboard/DashboardKpiBar";
 import { OrderBuilder } from "@/components/order-builder/OrderBuilder";
 import { OrdersPanel } from "@/components/orders/OrdersPanel";
 import { Button } from "@/components/ui/button";
@@ -631,17 +632,19 @@ export default function Home() {
 
   const dhakaNow = getDhakaTimeParts(new Date(serverNowMs));
 
+  const activeCartCount = cart.items.filter((i) => i.status === "active").length;
+
   return (
-    <section className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+    <section className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6">
       {/* Page Top Header */}
-      <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-2xs sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-5 flex flex-col gap-4 rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
             Build Your Breakfast
           </h1>
           <p className="mt-1 text-sm text-slate-600">
-            Live cross-group rules, shared ingredient reservations, and
-            server-synced pricing.
+            POS operations dashboard for custom orders, shared stock
+            reservations, and live sales analytics.
           </p>
         </div>
 
@@ -652,7 +655,7 @@ export default function Home() {
           </span>
           <Clock className="h-3.5 w-3.5 text-slate-500" />
           <span className="text-slate-600">Server (Asia/Dhaka):</span>
-          <span className="font-mono font-semibold text-slate-900">
+          <span className="font-mono font-semibold tabular-nums text-slate-900">
             {dhakaNow.date} {dhakaNow.timeString}
           </span>
         </div>
@@ -670,7 +673,14 @@ export default function Home() {
           {loadError ?? "Menu unavailable."}
         </div>
       ) : (
-        <div className="space-y-8">
+        <div className="space-y-6">
+          <DashboardKpiBar
+            orders={orders}
+            menu={menu}
+            remainingStock={remainingStock}
+            activeCartCount={activeCartCount}
+          />
+
           {(versionConflictNotice || otherTabUpdated) && (
             <div
               role="alert"
@@ -694,8 +704,11 @@ export default function Home() {
               </Button>
             </div>
           )}
-          <div className="grid gap-6 lg:grid-cols-12">
-            <div className="lg:col-span-8">
+          <div
+            id="pos-builder"
+            className="grid scroll-mt-20 gap-6 lg:grid-cols-12"
+          >
+            <div className="min-w-0 lg:col-span-7 xl:col-span-8">
               <OrderBuilder
                 menu={menu}
                 selections={selections}
@@ -718,8 +731,8 @@ export default function Home() {
               />
             </div>
 
-            <aside className="space-y-4 lg:col-span-4">
-              <div className="space-y-4 lg:sticky lg:top-20">
+            <aside className="min-w-0 space-y-4 lg:col-span-5 xl:col-span-4">
+              <div className="space-y-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
                 <CartPanel
                   menu={menu}
                   cart={cart}
@@ -780,11 +793,11 @@ export default function Home() {
             </aside>
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-12">
-            <div className="lg:col-span-7">
+          <div className="grid gap-6 xl:grid-cols-12">
+            <div id="orders-section" className="min-w-0 scroll-mt-20 xl:col-span-7">
               <OrdersPanel orders={orders} />
             </div>
-            <div className="lg:col-span-5">
+            <div id="assistant-section" className="min-w-0 scroll-mt-20 xl:col-span-5">
               <SalesAssistantPanel orders={orders} menu={menu} />
             </div>
           </div>

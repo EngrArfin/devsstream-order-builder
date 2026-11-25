@@ -288,7 +288,7 @@ export function OrderBuilder({
                 </div>
               </CardHeader>
 
-              <CardContent className="grid gap-3 sm:grid-cols-2">
+              <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {group.options.map((option) => {
                   const qty = selections[option.id] ?? 0;
                   const maxAddable = getMaxAddableForOption(
@@ -513,12 +513,12 @@ export function OrderBuilder({
             )}
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
             {editingItemId && onCancelEdit && (
               <Button
                 type="button"
                 variant="outline"
-                className="rounded-xl"
+                className="w-full rounded-xl sm:w-auto"
                 onClick={onCancelEdit}
                 disabled={submitting}
               >
@@ -528,7 +528,7 @@ export function OrderBuilder({
             <Button
               type="button"
               size="lg"
-              className="rounded-xl bg-slate-900 px-6 font-semibold text-white shadow-sm hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 disabled:opacity-100"
+              className="w-full rounded-xl bg-slate-900 px-6 font-semibold text-white shadow-sm hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 disabled:opacity-100 sm:w-auto"
               onClick={onSubmitItem}
               disabled={!canSubmit}
             >
