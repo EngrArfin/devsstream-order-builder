@@ -190,6 +190,13 @@ export function getMockServerBehavior(): ServerBehaviorConfig {
 export function handleGetMenu() {
   const state = getState();
   sweepExpiredReservations(state);
+  // Part G: On refresh/initial load, keep only still-valid (active) reservations
+  const activeOnly = state.cart.items.filter((i) => i.status === "active");
+  if (activeOnly.length !== state.cart.items.length) {
+    state.cart.items = activeOnly;
+    state.cart.version += 1;
+    saveState(state);
+  }
   return {
     status: 200,
     body: {

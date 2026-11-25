@@ -1,9 +1,11 @@
-import { Clock, Package } from "lucide-react";
+import { AlertTriangle, Clock, Package, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SalesAssistantPanel } from "@/components/assistant/SalesAssistantPanel";
 import { CartPanel } from "@/components/cart/CartPanel";
 import { CheckoutPanel } from "@/components/checkout/CheckoutPanel";
 import { OrderBuilder } from "@/components/order-builder/OrderBuilder";
 import { OrdersPanel } from "@/components/orders/OrdersPanel";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CartPricingResult } from "@/engine/pricing";
 import { getDhakaTimeParts } from "@/engine/pricing";
@@ -21,6 +23,7 @@ import {
   submitCheckout,
   updateCartItem,
 } from "@/lib/api";
+import { SERVER_STORAGE_KEY } from "@/mocks/serverState";
 import type {
   CartItem,
   CartState,
@@ -29,6 +32,57 @@ import type {
   Order,
   PaymentMethod,
 } from "@/types/order";
+
+const DRAFT_STORAGE_KEY = "smart_order_builder_draft_v1";
+
+interface SavedDraft {
+  selections: ConfigSelections;
+  quantity: number;
+}
+
+function readSavedDraft(): SavedDraft {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return { selections: {}, quantity: 1 };
+  }
+  try {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) {
+      return { selections: {}, quantity: 1 };
+    }
+    const parsed = JSON.parse(raw) as Partial<SavedDraft>;
+    return {
+      selections: parsed.selections ?? {},
+      quantity:
+        typeof parsed.quantity === "number" && parsed.quantity >= 1
+          ? parsed.quantity
+          : 1,
+    };
+  } catch {
+    return { selections: {}, quantity: 1 };
+  }
+}
+
+function writeSavedDraft(draft: SavedDraft): void {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function clearSavedDraft(): void {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    // Ignore
+  }
+}
 
 function makeIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -52,12 +106,20 @@ export default function Home() {
   const [loadingMenu, setLoadingMenu] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [selections, setSelections] = useState<ConfigSelections>({});
-  const [quantity, setQuantity] = useState<number>(1);
+  const [selections, setSelections] = useState<ConfigSelections>(
+    () => readSavedDraft().selections
+  );
+  const [quantity, setQuantity] = useState<number>(
+    () => readSavedDraft().quantity
+  );
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [expiredEditNotice, setExpiredEditNotice] = useState<string | null>(
     null
   );
+  const [versionConflictNotice, setVersionConflictNotice] = useState<
+    string | null
+  >(null);
+  const [otherTabUpdated, setOtherTabUpdated] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
@@ -86,6 +148,23 @@ export default function Home() {
       setCartPricing(menuData.pricing);
       setOrders(ordersData.orders);
       syncServerTime(menuData.serverTime);
+
+      // Sanitize any restored draft against the active menu fixture
+      const validIds = new Set(
+        menuData.menu.groups.flatMap((g) => g.options.map((o) => o.id))
+      );
+      setSelections((prev) => {
+        const filtered: ConfigSelections = {};
+        for (const [id, qty] of Object.entries(prev)) {
+          if (validIds.has(id) && qty > 0) {
+            filtered[id] = qty;
+          }
+        }
+        return filtered;
+      });
+      setQuantity((prev) =>
+        Math.min(menuData.menu.maxItemQuantity, Math.max(1, prev))
+      );
     } catch (err) {
       setLoadError(
         err instanceof Error ? err.message : "Failed to load menu data."
@@ -98,6 +177,57 @@ export default function Home() {
   useEffect(() => {
     void loadInitialData();
   }, [loadInitialData]);
+
+  // Persist unfinished draft configuration across refreshes (when not editing an existing item)
+  useEffect(() => {
+    if (loadingMenu || editingItemId) {
+      return;
+    }
+    const hasSelections = Object.keys(selections).length > 0 || quantity > 1;
+    if (hasSelections) {
+      writeSavedDraft({ selections, quantity });
+    } else {
+      clearSavedDraft();
+    }
+  }, [editingItemId, loadingMenu, quantity, selections]);
+
+  // Detect changes from another browser tab via localStorage storage events
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === SERVER_STORAGE_KEY) {
+        setOtherTabUpdated(true);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const handleReloadFromServer = useCallback(async () => {
+    setVersionConflictNotice(null);
+    setOtherTabUpdated(false);
+    try {
+      const [cartData, ordersData] = await Promise.all([
+        fetchCart(),
+        fetchOrders(),
+      ]);
+      setCart(cartData.cart);
+      setSoldByIngredient(cartData.soldByIngredient);
+      setCartPricing(cartData.pricing);
+      setOrders(ordersData.orders);
+      syncServerTime(cartData.serverTime);
+      pendingCheckoutKeyRef.current = makeIdempotencyKey();
+      if (
+        editingItemId &&
+        !cartData.cart.items.some(
+          (i) => i.id === editingItemId && i.status === "active"
+        )
+      ) {
+        setEditingItemId(null);
+      }
+    } catch {
+      setCartError("Failed to reload cart state from server.");
+    }
+  }, [editingItemId, syncServerTime]);
 
   // Auto-sync with server when any active item passes its server-time expiry
   useEffect(() => {
@@ -169,6 +299,7 @@ export default function Home() {
   const handleResetDraft = useCallback(() => {
     setSubmitError(null);
     setExpiredEditNotice(null);
+    clearSavedDraft();
     pendingAddKeyRef.current = makeIdempotencyKey();
     setSelections({});
     setQuantity(1);
@@ -218,6 +349,7 @@ export default function Home() {
         syncServerTime(res.serverTime);
         setEditingItemId(null);
         setExpiredEditNotice(null);
+        clearSavedDraft();
         pendingAddKeyRef.current = makeIdempotencyKey();
         pendingCheckoutKeyRef.current = makeIdempotencyKey();
         setSelections({});
@@ -234,6 +366,7 @@ export default function Home() {
         setCartPricing(res.pricing);
         syncServerTime(res.serverTime);
         setExpiredEditNotice(null);
+        clearSavedDraft();
         pendingAddKeyRef.current = makeIdempotencyKey();
         pendingCheckoutKeyRef.current = makeIdempotencyKey();
         setSelections({});
@@ -252,7 +385,14 @@ export default function Home() {
         }
         syncServerTime(err.payload.serverTime);
 
-        if (err.payload.code === "RESERVATION_EXPIRED" && editingItemId) {
+        if (err.payload.code === "VERSION_CONFLICT") {
+          setVersionConflictNotice(
+            "Cart changed in another tab. Reloaded the latest cart — your draft choices are preserved."
+          );
+          setOtherTabUpdated(false);
+          pendingAddKeyRef.current = makeIdempotencyKey();
+          pendingCheckoutKeyRef.current = makeIdempotencyKey();
+        } else if (err.payload.code === "RESERVATION_EXPIRED" && editingItemId) {
           setEditingItemId(null);
           setExpiredEditNotice(
             "This reservation expired while editing and its stock was released. Your unsaved choices are kept below — click 'Reserve as New Item' if stock is available."
@@ -310,7 +450,14 @@ export default function Home() {
             setCartPricing(err.payload.pricing);
           }
           syncServerTime(err.payload.serverTime);
-          setCartError(err.message);
+          if (err.payload.code === "VERSION_CONFLICT") {
+            setVersionConflictNotice(
+              "Cart changed in another tab. Reloaded the latest cart."
+            );
+            setOtherTabUpdated(false);
+          } else {
+            setCartError(err.message);
+          }
         } else {
           setCartError("Failed to update quantity.");
         }
@@ -352,7 +499,14 @@ export default function Home() {
             setCartPricing(err.payload.pricing);
           }
           syncServerTime(err.payload.serverTime);
-          setCartError(err.message);
+          if (err.payload.code === "VERSION_CONFLICT") {
+            setVersionConflictNotice(
+              "Cart changed in another tab. Reloaded the latest cart."
+            );
+            setOtherTabUpdated(false);
+          } else {
+            setCartError(err.message);
+          }
         } else {
           setCartError("Failed to remove item.");
         }
@@ -389,7 +543,14 @@ export default function Home() {
             setCartPricing(err.payload.pricing);
           }
           syncServerTime(err.payload.serverTime);
-          setCheckoutError(err.message);
+          if (err.payload.code === "VERSION_CONFLICT") {
+            setVersionConflictNotice(
+              "Cart changed in another tab. Reloaded the latest cart."
+            );
+            setOtherTabUpdated(false);
+          } else {
+            setCheckoutError(err.message);
+          }
         } else {
           setCheckoutError("Failed to update coupon.");
         }
@@ -438,7 +599,14 @@ export default function Home() {
             setCartPricing(err.payload.pricing);
           }
           syncServerTime(err.payload.serverTime);
-          setCheckoutError(err.message);
+          if (err.payload.code === "VERSION_CONFLICT") {
+            setVersionConflictNotice(
+              "Cart changed in another tab. Reloaded the latest cart."
+            );
+            setOtherTabUpdated(false);
+          } else {
+            setCheckoutError(err.message);
+          }
         } else {
           setCheckoutError("Checkout failed. Please retry.");
         }
@@ -503,6 +671,29 @@ export default function Home() {
         </div>
       ) : (
         <div className="space-y-8">
+          {(versionConflictNotice || otherTabUpdated) && (
+            <div
+              role="alert"
+              data-testid="version-conflict-banner"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 border-l-4 border-l-amber-500 bg-amber-50 p-3.5 text-xs sm:text-sm text-amber-950"
+            >
+              <span className="flex items-center gap-2 font-medium">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                {versionConflictNotice ??
+                  "Cart was updated in another browser tab. Reload to sync latest reservations."}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="bg-white text-xs"
+                onClick={() => void handleReloadFromServer()}
+              >
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                Reload Cart
+              </Button>
+            </div>
+          )}
           <div className="grid gap-6 lg:grid-cols-12">
             <div className="lg:col-span-8">
               <OrderBuilder
@@ -570,13 +761,12 @@ export default function Home() {
                           <span
                             key={ing.id}
                             data-testid={`kitchen-stock-${ing.id}`}
-                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium ${
-                              left === 0
+                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium ${left === 0
                                 ? "border-rose-200 bg-rose-50 text-rose-700"
                                 : left <= 2
                                   ? "border-amber-200 bg-amber-50 text-amber-800"
                                   : "border-slate-200 bg-slate-50 text-slate-700"
-                            }`}
+                              }`}
                           >
                             <span className="capitalize">{ing.name}:</span>
                             <span className="font-bold">{left}</span>
@@ -590,7 +780,14 @@ export default function Home() {
             </aside>
           </div>
 
-          <OrdersPanel orders={orders} />
+          <div className="grid gap-6 lg:grid-cols-12">
+            <div className="lg:col-span-7">
+              <OrdersPanel orders={orders} />
+            </div>
+            <div className="lg:col-span-5">
+              <SalesAssistantPanel orders={orders} menu={menu} />
+            </div>
+          </div>
         </div>
       )}
     </section>
