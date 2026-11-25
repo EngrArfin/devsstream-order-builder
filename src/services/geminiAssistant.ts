@@ -9,7 +9,7 @@ import {
 } from "@/engine/stats";
 import type { MenuFixture, Order } from "@/types/order";
 
-export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 
 export interface GeminiAssistantResult {
   reply: string;
