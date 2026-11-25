@@ -5,9 +5,21 @@ import { DashboardToaster } from "./components/ui/Toaster.tsx";
 import "./index.css";
 import routes from "./routes/Routes.tsx";
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <RouterProvider router={routes} />
-    <DashboardToaster />
-  </StrictMode>
-);
+async function enableMocking() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const { worker } = await import("./mocks/browser");
+  await worker.start({
+    onUnhandledRequest: "bypass",
+  });
+}
+
+enableMocking().then(() => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <RouterProvider router={routes} />
+      <DashboardToaster />
+    </StrictMode>
+  );
+});
