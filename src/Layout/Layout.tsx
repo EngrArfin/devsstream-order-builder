@@ -1,15 +1,12 @@
-import Footer from "./Footer";
 import { Outlet } from "react-router-dom";
+import Footer from "./Footer";
 import { Navbar } from "./Navbar";
 
 const Layout: React.FC = () => {
   return (
-    <div>
-      <div className="fixed top-0 left-0 right-0 z-50">
-
+    <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
       <Navbar />
-      </div>
-      <main>
+      <main className="flex-1">
         <Outlet />
       </main>
       <Footer />
