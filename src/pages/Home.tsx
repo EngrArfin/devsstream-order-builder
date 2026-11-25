@@ -1,20 +1,27 @@
-import { Clock, Package, ShoppingBag } from "lucide-react";
+import { Clock, Package } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CartPanel } from "@/components/cart/CartPanel";
 import { OrderBuilder } from "@/components/order-builder/OrderBuilder";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CartPricingResult } from "@/engine/pricing";
 import { getDhakaTimeParts } from "@/engine/pricing";
 import { computeRemainingStock } from "@/engine/stock";
 import { usePricePreview } from "@/hooks/usePricePreview";
 import { useServerClock } from "@/hooks/useServerClock";
-import { addCartItem, ApiError, fetchMenu } from "@/lib/api";
+import {
+  addCartItem,
+  ApiError,
+  deleteCartItem,
+  fetchCart,
+  fetchMenu,
+  updateCartItem,
+} from "@/lib/api";
 import type {
+  CartItem,
   CartState,
   ConfigSelections,
   MenuFixture,
 } from "@/types/order";
-import { formatPoishaAsBdt } from "@/utils/currency";
 
 function makeIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -39,10 +46,17 @@ export default function Home() {
 
   const [selections, setSelections] = useState<ConfigSelections>({});
   const [quantity, setQuantity] = useState<number>(1);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [expiredEditNotice, setExpiredEditNotice] = useState<string | null>(
+    null
+  );
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [busyItemId, setBusyItemId] = useState<string | null>(null);
+  const [cartError, setCartError] = useState<string | null>(null);
 
   const pendingAddKeyRef = useRef<string>(makeIdempotencyKey());
+  const syncedExpiredIdsRef = useRef<Set<string>>(new Set());
   const { serverNowMs, syncServerTime } = useServerClock();
 
   const loadInitialMenu = useCallback(async () => {
@@ -67,6 +81,43 @@ export default function Home() {
   useEffect(() => {
     void loadInitialMenu();
   }, [loadInitialMenu]);
+
+  // Auto-sync with server when any active item passes its server-time expiry
+  useEffect(() => {
+    const newlyExpired = cart.items.filter(
+      (item) =>
+        item.status === "active" &&
+        Date.parse(item.expiresAt) <= serverNowMs &&
+        !syncedExpiredIdsRef.current.has(item.id)
+    );
+    if (newlyExpired.length === 0) {
+      return;
+    }
+
+    for (const item of newlyExpired) {
+      syncedExpiredIdsRef.current.add(item.id);
+    }
+
+    void fetchCart()
+      .then((res) => {
+        setCart(res.cart);
+        setCartPricing(res.pricing);
+        syncServerTime(res.serverTime);
+
+        if (editingItemId) {
+          const edited = res.cart.items.find((i) => i.id === editingItemId);
+          if (!edited || edited.status === "expired") {
+            setEditingItemId(null);
+            setExpiredEditNotice(
+              "The item's 5-minute reservation expired while you were editing. Your unsaved choices are kept below — click 'Reserve as New Item' to reserve fresh stock."
+            );
+          }
+        }
+      })
+      .catch(() => {
+        // Ignore transient sync error; next action will sync with server
+      });
+  }, [cart.items, editingItemId, serverNowMs, syncServerTime]);
 
   const pricePreview = usePricePreview({
     selections,
@@ -99,30 +150,71 @@ export default function Home() {
 
   const handleResetDraft = useCallback(() => {
     setSubmitError(null);
+    setExpiredEditNotice(null);
     pendingAddKeyRef.current = makeIdempotencyKey();
     setSelections({});
     setQuantity(1);
   }, []);
 
-  const handleAddToCart = useCallback(async () => {
+  const handleStartEdit = useCallback((item: CartItem) => {
+    if (item.status !== "active") {
+      return;
+    }
+    setSubmitError(null);
+    setCartError(null);
+    setExpiredEditNotice(null);
+    setEditingItemId(item.id);
+    setSelections({ ...item.selections });
+    setQuantity(item.quantity);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingItemId(null);
+    setSubmitError(null);
+    setExpiredEditNotice(null);
+    pendingAddKeyRef.current = makeIdempotencyKey();
+    setSelections({});
+    setQuantity(1);
+  }, []);
+
+  const handleSubmitBuilder = useCallback(async () => {
     if (!menu || submitting) {
       return;
     }
     setSubmitting(true);
     setSubmitError(null);
+    setCartError(null);
+
     try {
-      const res = await addCartItem({
-        idempotencyKey: pendingAddKeyRef.current,
-        selections,
-        quantity,
-        expectedVersion: cart.version,
-      });
-      setCart(res.cart);
-      setCartPricing(res.pricing);
-      syncServerTime(res.serverTime);
-      pendingAddKeyRef.current = makeIdempotencyKey();
-      setSelections({});
-      setQuantity(1);
+      if (editingItemId) {
+        const res = await updateCartItem(editingItemId, {
+          selections,
+          quantity,
+          expectedVersion: cart.version,
+        });
+        setCart(res.cart);
+        setCartPricing(res.pricing);
+        syncServerTime(res.serverTime);
+        setEditingItemId(null);
+        setExpiredEditNotice(null);
+        pendingAddKeyRef.current = makeIdempotencyKey();
+        setSelections({});
+        setQuantity(1);
+      } else {
+        const res = await addCartItem({
+          idempotencyKey: pendingAddKeyRef.current,
+          selections,
+          quantity,
+          expectedVersion: cart.version,
+        });
+        setCart(res.cart);
+        setCartPricing(res.pricing);
+        syncServerTime(res.serverTime);
+        setExpiredEditNotice(null);
+        pendingAddKeyRef.current = makeIdempotencyKey();
+        setSelections({});
+        setQuantity(1);
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.payload.cart) {
@@ -132,27 +224,108 @@ export default function Home() {
           setCartPricing(err.payload.pricing);
         }
         syncServerTime(err.payload.serverTime);
-        setSubmitError(err.message);
+
+        if (err.payload.code === "RESERVATION_EXPIRED" && editingItemId) {
+          setEditingItemId(null);
+          setExpiredEditNotice(
+            "This reservation expired while editing and its stock was released. Your unsaved choices are kept below — click 'Reserve as New Item' if stock is available."
+          );
+          pendingAddKeyRef.current = makeIdempotencyKey();
+        } else {
+          // D1: Keep edit mode & unsaved form state intact on conflict/shortage
+          setSubmitError(err.message);
+        }
       } else {
-        setSubmitError("Failed to add item to cart. Please retry.");
+        setSubmitError("Request failed. Your choices were kept — please retry.");
       }
     } finally {
       setSubmitting(false);
     }
-  }, [cart.version, menu, quantity, selections, submitting, syncServerTime]);
+  }, [
+    cart.version,
+    editingItemId,
+    menu,
+    quantity,
+    selections,
+    submitting,
+    syncServerTime,
+  ]);
 
-  const optionNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!menu) {
-      return map;
-    }
-    for (const group of menu.groups) {
-      for (const opt of group.options) {
-        map.set(opt.id, opt.name);
+  const handleUpdateCartItemQty = useCallback(
+    async (item: CartItem, nextQty: number) => {
+      if (item.status !== "active" || busyItemId) {
+        return;
       }
-    }
-    return map;
-  }, [menu]);
+      setBusyItemId(item.id);
+      setCartError(null);
+      try {
+        const res = await updateCartItem(item.id, {
+          selections: item.selections,
+          quantity: nextQty,
+          expectedVersion: cart.version,
+        });
+        setCart(res.cart);
+        setCartPricing(res.pricing);
+        syncServerTime(res.serverTime);
+        if (editingItemId === item.id) {
+          setQuantity(nextQty);
+        }
+      } catch (err) {
+        if (err instanceof ApiError) {
+          if (err.payload.cart) {
+            setCart(err.payload.cart);
+          }
+          if (err.payload.pricing) {
+            setCartPricing(err.payload.pricing);
+          }
+          syncServerTime(err.payload.serverTime);
+          setCartError(err.message);
+        } else {
+          setCartError("Failed to update quantity.");
+        }
+      } finally {
+        setBusyItemId(null);
+      }
+    },
+    [busyItemId, cart.version, editingItemId, syncServerTime]
+  );
+
+  const handleRemoveCartItem = useCallback(
+    async (itemId: string) => {
+      if (busyItemId) {
+        return;
+      }
+      setBusyItemId(itemId);
+      setCartError(null);
+      try {
+        const res = await deleteCartItem(itemId, cart.version);
+        setCart(res.cart);
+        setCartPricing(res.pricing);
+        syncServerTime(res.serverTime);
+        if (editingItemId === itemId) {
+          setEditingItemId(null);
+          setSelections({});
+          setQuantity(1);
+        }
+      } catch (err) {
+        if (err instanceof ApiError) {
+          if (err.payload.cart) {
+            setCart(err.payload.cart);
+          }
+          if (err.payload.pricing) {
+            setCartPricing(err.payload.pricing);
+          }
+          syncServerTime(err.payload.serverTime);
+          setCartError(err.message);
+        } else {
+          setCartError("Failed to remove item.");
+        }
+      } finally {
+        setBusyItemId(null);
+      }
+    },
+    [busyItemId, cart.version, editingItemId, syncServerTime]
+  );
 
   const remainingStock = useMemo(() => {
     if (!menu) {
@@ -215,6 +388,8 @@ export default function Home() {
               quantity={quantity}
               cartItems={cart.items}
               soldByIngredient={soldByIngredient}
+              editingItemId={editingItemId}
+              expiredEditNotice={expiredEditNotice}
               pricePreview={pricePreview.pricing}
               priceLoading={pricePreview.loading}
               priceError={pricePreview.error}
@@ -224,86 +399,25 @@ export default function Home() {
               onChangeOptionQty={handleChangeOptionQty}
               onResetDraft={handleResetDraft}
               onRetryPrice={pricePreview.retry}
-              onSubmitItem={handleAddToCart}
+              onSubmitItem={handleSubmitBuilder}
+              onCancelEdit={handleCancelEdit}
             />
           </div>
 
           <aside className="space-y-4 lg:col-span-4">
             <div className="space-y-4 lg:sticky lg:top-20">
-              {/* Cart Summary */}
-              <Card className="border-slate-200/90 shadow-sm">
-                <CardHeader className="border-b border-slate-100 pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                      <ShoppingBag className="h-4 w-4 text-amber-600" />
-                      Cart
-                    </CardTitle>
-                    <Badge variant="secondary" className="bg-slate-100">
-                      {cart.items.length} item{cart.items.length === 1 ? "" : "s"}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3 pt-4 text-sm">
-                  {cart.items.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-6 text-center text-xs text-slate-500">
-                      Your cart is empty. Configure an item on the left and
-                      click Add to Cart.
-                    </div>
-                  ) : (
-                    <ul className="space-y-2.5">
-                      {cart.items.map((item) => (
-                        <li
-                          key={item.id}
-                          className="rounded-xl border border-slate-200 bg-slate-50/70 p-3"
-                        >
-                          <div className="flex items-center justify-between font-semibold text-slate-900">
-                            <span>
-                              {menu.productName} × {item.quantity}
-                            </span>
-                            <Badge
-                              variant={
-                                item.status === "active"
-                                  ? "secondary"
-                                  : "destructive"
-                              }
-                              className="text-[10px] uppercase"
-                            >
-                              {item.status}
-                            </Badge>
-                          </div>
-                          <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
-                            {Object.entries(item.selections)
-                              .map(
-                                ([optId, qty]) =>
-                                  `${optionNameById.get(optId) ?? optId} ×${qty}`
-                              )
-                              .join(", ")}
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-
-                  {cartPricing && cart.items.length > 0 && (
-                    <div className="space-y-1.5 border-t border-slate-200 pt-3 text-xs text-slate-700">
-                      <div className="flex justify-between">
-                        <span>Subtotal</span>
-                        <span>
-                          {formatPoishaAsBdt(cartPricing.pricing.subtotalPoisha)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm font-bold text-slate-900">
-                        <span>Payable</span>
-                        <span>
-                          {formatPoishaAsBdt(cartPricing.pricing.payablePoisha, {
-                            decimals: 0,
-                          })}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              <CartPanel
+                menu={menu}
+                cart={cart}
+                cartPricing={cartPricing}
+                serverNowMs={serverNowMs}
+                editingItemId={editingItemId}
+                busyItemId={busyItemId}
+                cartError={cartError}
+                onEditItem={handleStartEdit}
+                onUpdateItemQty={handleUpdateCartItemQty}
+                onRemoveItem={handleRemoveCartItem}
+              />
 
               {/* Live Kitchen Stock Overview */}
               <Card className="border-slate-200/90 shadow-2xs">
@@ -320,6 +434,7 @@ export default function Home() {
                       return (
                         <span
                           key={ing.id}
+                          data-testid={`kitchen-stock-${ing.id}`}
                           className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium ${
                             left === 0
                               ? "border-rose-200 bg-rose-50 text-rose-700"

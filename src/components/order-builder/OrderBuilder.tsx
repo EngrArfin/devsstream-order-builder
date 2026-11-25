@@ -34,6 +34,7 @@ interface OrderBuilderProps {
   cartItems: CartItem[];
   soldByIngredient: Record<string, number>;
   editingItemId?: string | null;
+  expiredEditNotice?: string | null;
   pricePreview: CartPricingResult | null;
   priceLoading: boolean;
   priceError: string | null;
@@ -86,6 +87,7 @@ export function OrderBuilder({
   cartItems,
   soldByIngredient,
   editingItemId,
+  expiredEditNotice,
   pricePreview,
   priceLoading,
   priceError,
@@ -123,6 +125,37 @@ export function OrderBuilder({
 
   return (
     <div className="space-y-5">
+      {expiredEditNotice && (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-300 border-l-4 border-l-amber-500 bg-amber-50 p-4 text-sm text-amber-950 shadow-2xs"
+        >
+          <p className="font-semibold">Reservation expired while editing</p>
+          <p className="mt-1 text-xs sm:text-sm">{expiredEditNotice}</p>
+        </div>
+      )}
+
+      {editingItemId && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50/90 px-4 py-2.5 text-sm text-amber-950">
+          <span className="font-medium">
+            Editing existing cart item — your current allocation counts toward
+            stock.
+          </span>
+          {onCancelEdit && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 bg-white text-xs"
+              onClick={onCancelEdit}
+              disabled={submitting}
+            >
+              Cancel Edit
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Product Banner Card */}
       <Card className="overflow-hidden border-slate-200/90 shadow-xs">
         <div className="h-1.5 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500" />
@@ -213,17 +246,15 @@ export function OrderBuilder({
           return (
             <Card
               key={group.id}
-              className={`border-slate-200/90 shadow-2xs transition-colors ${
-                groupHasError ? "border-rose-300/90" : ""
-              }`}
+              className={`border-slate-200/90 shadow-2xs transition-colors ${groupHasError ? "border-rose-300/90" : ""
+                }`}
             >
               <CardHeader className="pb-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5">
                     <span
-                      className={`h-4 w-1 rounded-full ${
-                        groupTotal > 0 ? "bg-amber-500" : "bg-slate-300"
-                      }`}
+                      className={`h-4 w-1 rounded-full ${groupTotal > 0 ? "bg-amber-500" : "bg-slate-300"
+                        }`}
                     />
                     <CardTitle className="text-base font-semibold text-slate-900">
                       {group.name}
@@ -246,11 +277,10 @@ export function OrderBuilder({
                       )}
                     </Badge>
                     <span
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                        groupTotal > 0
-                          ? "bg-slate-900 text-white"
-                          : "bg-slate-100 text-slate-500"
-                      }`}
+                      className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${groupTotal > 0
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-500"
+                        }`}
                     >
                       Selected: {groupTotal}
                     </span>
@@ -285,13 +315,12 @@ export function OrderBuilder({
                   return (
                     <div
                       key={option.id}
-                      className={`flex items-center justify-between rounded-xl border p-3.5 transition-all ${
-                        qty > 0
-                          ? "border-amber-500 bg-amber-50/40 ring-1 ring-amber-500/20 shadow-2xs"
-                          : maxAddable === 0
-                            ? "border-slate-200 bg-slate-50/80 opacity-80"
-                            : "border-slate-200/90 bg-white hover:border-slate-300 hover:shadow-2xs"
-                      }`}
+                      className={`flex items-center justify-between rounded-xl border p-3.5 transition-all ${qty > 0
+                        ? "border-amber-500 bg-amber-50/40 ring-1 ring-amber-500/20 shadow-2xs"
+                        : maxAddable === 0
+                          ? "border-slate-200 bg-slate-50/80 opacity-80"
+                          : "border-slate-200/90 bg-white hover:border-slate-300 hover:shadow-2xs"
+                        }`}
                     >
                       <div className="min-w-0 pr-3">
                         <div className="flex flex-wrap items-center gap-2">
@@ -299,11 +328,10 @@ export function OrderBuilder({
                             {option.name}
                           </span>
                           <span
-                            className={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${
-                              option.pricePoisha === 0
-                                ? "bg-emerald-50 text-emerald-700"
-                                : "bg-slate-100 text-slate-700"
-                            }`}
+                            className={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${option.pricePoisha === 0
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-slate-100 text-slate-700"
+                              }`}
                           >
                             {option.pricePoisha === 0
                               ? "Included"
@@ -344,9 +372,8 @@ export function OrderBuilder({
                           <Minus className="h-3.5 w-3.5" />
                         </Button>
                         <span
-                          className={`w-7 text-center text-sm font-bold ${
-                            qty > 0 ? "text-amber-700" : "text-slate-500"
-                          }`}
+                          className={`w-7 text-center text-sm font-bold ${qty > 0 ? "text-amber-700" : "text-slate-500"
+                            }`}
                           data-testid={`option-qty-${option.id}`}
                         >
                           {qty}
@@ -376,19 +403,17 @@ export function OrderBuilder({
       {violations.length > 0 || !stockCheck.ok || submitError ? (
         <div
           role="alert"
-          className={`space-y-2 rounded-xl border border-l-4 p-4 text-sm shadow-2xs ${
-            hasHardConflict
-              ? "border-rose-200 border-l-rose-500 bg-rose-50/90 text-rose-900"
-              : "border-amber-200 border-l-amber-500 bg-amber-50/80 text-amber-950"
-          }`}
+          className={`space-y-2 rounded-xl border border-l-4 p-4 text-sm shadow-2xs ${hasHardConflict
+            ? "border-rose-200 border-l-rose-500 bg-rose-50/90 text-rose-900"
+            : "border-amber-200 border-l-amber-500 bg-amber-50/80 text-amber-950"
+            }`}
         >
           {violations.length > 0 && (
             <div>
               <p className="flex items-center gap-1.5 font-semibold">
                 <AlertCircle
-                  className={`h-4 w-4 shrink-0 ${
-                    hasHardConflict ? "text-rose-600" : "text-amber-600"
-                  }`}
+                  className={`h-4 w-4 shrink-0 ${hasHardConflict ? "text-rose-600" : "text-amber-600"
+                    }`}
                 />
                 {hasHardConflict
                   ? `Configuration rules (${violations.length})`
@@ -467,21 +492,21 @@ export function OrderBuilder({
                 </div>
                 {(linePreview.extrasDiscountPoisha > 0 ||
                   linePreview.comboDiscountPoisha > 0) && (
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {linePreview.extrasDiscountPoisha > 0 && (
-                      <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-50">
-                        <Sparkles className="mr-1 h-3 w-3" />
-                        P2 Extras -{formatPoishaAsBdt(linePreview.extrasDiscountPoisha)}
-                      </Badge>
-                    )}
-                    {linePreview.comboDiscountPoisha > 0 && (
-                      <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-50">
-                        <Sparkles className="mr-1 h-3 w-3" />
-                        P1 Combo -{formatPoishaAsBdt(linePreview.comboDiscountPoisha)}
-                      </Badge>
-                    )}
-                  </div>
-                )}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {linePreview.extrasDiscountPoisha > 0 && (
+                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-50">
+                          <Sparkles className="mr-1 h-3 w-3" />
+                          P2 Extras -{formatPoishaAsBdt(linePreview.extrasDiscountPoisha)}
+                        </Badge>
+                      )}
+                      {linePreview.comboDiscountPoisha > 0 && (
+                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-50">
+                          <Sparkles className="mr-1 h-3 w-3" />
+                          P1 Combo -{formatPoishaAsBdt(linePreview.comboDiscountPoisha)}
+                        </Badge>
+                      )}
+                    </div>
+                  )}
               </div>
             ) : (
               <p className="text-sm text-slate-400">—</p>
@@ -511,9 +536,11 @@ export function OrderBuilder({
                 ? "Reserving…"
                 : editingItemId
                   ? "Save Changes"
-                  : submitError
-                    ? "Retry Add to Cart"
-                    : "Add to Cart"}
+                  : expiredEditNotice
+                    ? "Reserve as New Item"
+                    : submitError
+                      ? "Retry Add to Cart"
+                      : "Add to Cart"}
             </Button>
           </div>
         </CardContent>

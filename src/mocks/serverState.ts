@@ -395,6 +395,20 @@ export function handleUpdateCartItem(
     };
   }
 
+  if (item.status === "expired") {
+    return {
+      status: 410,
+      body: {
+        code: "RESERVATION_EXPIRED",
+        error: "Reservation expired while editing. Stock was released.",
+        cart: state.cart,
+        remainingStock: getRemainingStockSnapshot(state),
+        pricing: getActiveCartPricing(state),
+        serverTime,
+      },
+    };
+  }
+
   if (
     input.expectedVersion !== undefined &&
     input.expectedVersion !== state.cart.version
@@ -404,20 +418,6 @@ export function handleUpdateCartItem(
       body: {
         code: "VERSION_CONFLICT",
         error: "Cart changed in another tab. Reloading latest state.",
-        cart: state.cart,
-        remainingStock: getRemainingStockSnapshot(state),
-        pricing: getActiveCartPricing(state),
-        serverTime,
-      },
-    };
-  }
-
-  if (item.status === "expired") {
-    return {
-      status: 410,
-      body: {
-        code: "RESERVATION_EXPIRED",
-        error: "Reservation expired while editing. Stock was released.",
         cart: state.cart,
         remainingStock: getRemainingStockSnapshot(state),
         pricing: getActiveCartPricing(state),
