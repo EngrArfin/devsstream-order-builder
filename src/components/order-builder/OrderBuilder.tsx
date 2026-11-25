@@ -115,6 +115,12 @@ export function OrderBuilder({
   const canSubmit = violations.length === 0 && stockCheck.ok && !submitting;
   const linePreview = pricePreview?.items[0] ?? null;
 
+  const hasAnySelection = Object.values(selections).some((qty) => qty > 0);
+  const hasHardConflict =
+    !stockCheck.ok ||
+    Boolean(submitError) ||
+    violations.some((v) => v.kind === "rule" || hasAnySelection);
+
   return (
     <div className="space-y-5">
       {/* Product Banner Card */}
@@ -370,13 +376,23 @@ export function OrderBuilder({
       {violations.length > 0 || !stockCheck.ok || submitError ? (
         <div
           role="alert"
-          className="space-y-2 rounded-xl border border-rose-200 border-l-4 border-l-rose-500 bg-rose-50/90 p-4 text-sm text-rose-900 shadow-2xs"
+          className={`space-y-2 rounded-xl border border-l-4 p-4 text-sm shadow-2xs ${
+            hasHardConflict
+              ? "border-rose-200 border-l-rose-500 bg-rose-50/90 text-rose-900"
+              : "border-amber-200 border-l-amber-500 bg-amber-50/80 text-amber-950"
+          }`}
         >
           {violations.length > 0 && (
             <div>
               <p className="flex items-center gap-1.5 font-semibold">
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
-                Configuration rules ({violations.length})
+                <AlertCircle
+                  className={`h-4 w-4 shrink-0 ${
+                    hasHardConflict ? "text-rose-600" : "text-amber-600"
+                  }`}
+                />
+                {hasHardConflict
+                  ? `Configuration rules (${violations.length})`
+                  : `Required selections remaining (${violations.length})`}
               </p>
               <ul className="mt-1.5 list-disc space-y-1 pl-5 text-xs sm:text-sm">
                 {violations.map((v, idx) => (
@@ -487,7 +503,7 @@ export function OrderBuilder({
             <Button
               type="button"
               size="lg"
-              className="rounded-xl bg-slate-900 px-6 font-semibold text-white shadow-sm hover:bg-slate-800 disabled:bg-slate-300"
+              className="rounded-xl bg-slate-900 px-6 font-semibold text-white shadow-sm hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 disabled:opacity-100"
               onClick={onSubmitItem}
               disabled={!canSubmit}
             >
