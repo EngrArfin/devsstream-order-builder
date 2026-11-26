@@ -268,7 +268,10 @@ async function callGeminiApi(
       response.status === 404 ||
       statusStr === "UNAVAILABLE" ||
       /high demand/i.test(rawMsg) ||
-      /no longer available/i.test(rawMsg)
+      /no longer available/i.test(rawMsg) ||
+      /response modalities/i.test(rawMsg) ||
+      /not supported by the model/i.test(rawMsg) ||
+      /not found for api version/i.test(rawMsg)
     ) {
       throw new AssistantError(
         "MODEL_UNAVAILABLE",
@@ -291,6 +294,31 @@ interface GeminiModelsListResponse {
   }>;
 }
 
+const EXCLUDED_FLASH_VARIANT_RE =
+  /(tts|audio|image|live|robotics|computer-use|vision|embedding|aqa|omni)/i;
+
+const PREFERRED_FLASH_RANK = [
+  "gemini-3-flash-preview",
+  "gemini-3.5-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-flash-latest",
+  "gemini-flash-lite-latest",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+];
+
+function scoreFlashModel(name: string): number {
+  const exactIdx = PREFERRED_FLASH_RANK.indexOf(name);
+  if (exactIdx !== -1) {
+    return exactIdx;
+  }
+  const hasPreview = /preview|exp/i.test(name);
+  return PREFERRED_FLASH_RANK.length + (hasPreview ? 10 : 0);
+}
+
 async function discoverAlternativeFlashModels(
   apiKey: string,
   excludeModel: string,
@@ -310,10 +338,12 @@ async function discoverAlternativeFlashModels(
         (m) =>
           typeof m.name === "string" &&
           /flash/i.test(m.name) &&
+          !EXCLUDED_FLASH_VARIANT_RE.test(m.name) &&
           m.supportedGenerationMethods?.includes("generateContent")
       )
       .map((m) => m.name!.replace(/^models\//, ""))
-      .filter((name) => name !== excludeModel);
+      .filter((name) => name !== excludeModel)
+      .sort((a, b) => scoreFlashModel(a) - scoreFlashModel(b));
   } catch {
     return [];
   }
@@ -332,25 +362,30 @@ async function callGeminiWithFallback(
   contents: GeminiContent[],
   fetchFn: typeof fetch,
   retryDelayMs = 600
-): Promise<GeminiApiResponse> {
+): Promise<{ data: GeminiApiResponse; usedModel: string }> {
   let primaryError: AssistantError | null = null;
 
-  // Attempt 1 & quick retry on transient 503 high demand
+  // Attempt 1 & quick retry only on transient high-demand errors (503)
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      return await callGeminiApi(apiKey, requestedModel, contents, fetchFn);
+      const data = await callGeminiApi(apiKey, requestedModel, contents, fetchFn);
+      return { data, usedModel: requestedModel };
     } catch (err) {
       if (!(err instanceof AssistantError) || err.code !== "MODEL_UNAVAILABLE") {
         throw err;
       }
       primaryError = err;
+      const isNotFound = /not found|no longer available/i.test(err.message);
+      if (isNotFound) {
+        break;
+      }
       if (attempt === 0) {
         await waitMs(retryDelayMs);
       }
     }
   }
 
-  // If primary model is still unavailable, discover active Flash models for this key
+  // If primary model is still unavailable, discover active text Flash models for this key
   if (requestedModel === DEFAULT_GEMINI_MODEL) {
     const alternatives = await discoverAlternativeFlashModels(
       apiKey,
@@ -359,7 +394,8 @@ async function callGeminiWithFallback(
     );
     for (const altModel of alternatives) {
       try {
-        return await callGeminiApi(apiKey, altModel, contents, fetchFn);
+        const data = await callGeminiApi(apiKey, altModel, contents, fetchFn);
+        return { data, usedModel: altModel };
       } catch (err) {
         if (
           err instanceof AssistantError &&
@@ -420,15 +456,17 @@ export async function askSalesAssistant({
     },
   ];
   const toolsCalled: string[] = [];
+  let activeModel = model;
 
   for (let round = 0; round < 4; round += 1) {
-    const res = await callGeminiWithFallback(
+    const { data: res, usedModel } = await callGeminiWithFallback(
       trimmedKey,
-      model,
+      activeModel,
       contents,
       fetchFn,
       retryDelayMs
     );
+    activeModel = usedModel;
     const parts = res.candidates?.[0]?.content?.parts ?? [];
     const functionCalls = parts.filter((p) => Boolean(p.functionCall));
 

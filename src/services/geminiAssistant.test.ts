@@ -311,4 +311,77 @@ describe("Gemini Sales Assistant service", () => {
     expect(mockFetch).toHaveBeenCalledTimes(4);
     expect(result.reply).toContain("Customer data is not stored");
   });
+
+  it("skips non-text Flash variants like tts/image/audio when discovering fallback models", async () => {
+    const mockFetch = vi
+      .fn()
+      // Primary attempt 1 & retry -> 503
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: { status: "UNAVAILABLE", message: "High demand." },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: { status: "UNAVAILABLE", message: "High demand." },
+        }),
+      })
+      // Model discovery returns TTS & Image models before text Flash model
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [
+            {
+              name: "models/gemini-2.5-flash-preview-tts",
+              supportedGenerationMethods: ["generateContent"],
+            },
+            {
+              name: "models/gemini-2.5-flash-image",
+              supportedGenerationMethods: ["generateContent"],
+            },
+            {
+              name: "models/gemini-2.5-flash-native-audio-preview",
+              supportedGenerationMethods: ["generateContent"],
+            },
+            {
+              name: "models/gemini-2.5-flash",
+              supportedGenerationMethods: ["generateContent"],
+            },
+          ],
+        }),
+      })
+      // Fallback call should hit gemini-2.5-flash directly, skipping -tts/-image/-audio
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                role: "model",
+                parts: [{ text: "There are 6 orders." }],
+              },
+            },
+          ],
+        }),
+      });
+
+    const result = await askSalesAssistant({
+      question: "How many orders?",
+      orders: seedOrders,
+      menu: MENU_FIXTURE,
+      apiKey: "test-key",
+      fetchFn: mockFetch as unknown as typeof fetch,
+      retryDelayMs: 0,
+    });
+
+    const fourthCallUrl = String(mockFetch.mock.calls[3][0]);
+    expect(fourthCallUrl).toContain("models/gemini-2.5-flash:generateContent");
+    expect(result.reply).toBe("There are 6 orders.");
+  });
 });
