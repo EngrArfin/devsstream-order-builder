@@ -1,13 +1,12 @@
 import { AlertTriangle, Clock, Package, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SalesAssistantPanel } from "@/components/assistant/SalesAssistantPanel";
 import { CartPanel } from "@/components/cart/CartPanel";
 import { CheckoutPanel } from "@/components/checkout/CheckoutPanel";
 import { DashboardKpiBar } from "@/components/dashboard/DashboardKpiBar";
 import { OrderBuilder } from "@/components/order-builder/OrderBuilder";
-import { OrdersPanel } from "@/components/orders/OrdersPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useWorkspaceContext } from "@/context/WorkspaceContext";
 import type { CartPricingResult } from "@/engine/pricing";
 import { getDhakaTimeParts } from "@/engine/pricing";
 import { computeRemainingStock } from "@/engine/stock";
@@ -93,6 +92,7 @@ function makeIdempotencyKey(): string {
 }
 
 export default function Home() {
+  const workspace = useWorkspaceContext();
   const [menu, setMenu] = useState<MenuFixture | null>(null);
   const [cart, setCart] = useState<CartState>({
     items: [],
@@ -133,6 +133,8 @@ export default function Home() {
   const pendingAddKeyRef = useRef<string>(makeIdempotencyKey());
   const pendingCheckoutKeyRef = useRef<string>(makeIdempotencyKey());
   const syncedExpiredIdsRef = useRef<Set<string>>(new Set());
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
   const { serverNowMs, syncServerTime } = useServerClock();
 
   const loadInitialData = useCallback(async () => {
@@ -148,6 +150,8 @@ export default function Home() {
       setSoldByIngredient(menuData.soldByIngredient);
       setCartPricing(menuData.pricing);
       setOrders(ordersData.orders);
+      workspaceRef.current?.setWorkspaceMenu(menuData.menu);
+      workspaceRef.current?.setWorkspaceOrders(ordersData.orders);
       syncServerTime(menuData.serverTime);
 
       // Sanitize any restored draft against the active menu fixture
@@ -215,6 +219,7 @@ export default function Home() {
       setSoldByIngredient(cartData.soldByIngredient);
       setCartPricing(cartData.pricing);
       setOrders(ordersData.orders);
+      workspaceRef.current?.setWorkspaceOrders(ordersData.orders);
       syncServerTime(cartData.serverTime);
       pendingCheckoutKeyRef.current = makeIdempotencyKey();
       if (
@@ -580,6 +585,7 @@ export default function Home() {
         setSoldByIngredient(res.soldByIngredient);
         setCartPricing(res.pricing);
         setOrders(res.orders);
+        workspaceRef.current?.setWorkspaceOrders(res.orders);
         setLastCreatedOrder(res.order);
         syncServerTime(res.serverTime);
         pendingCheckoutKeyRef.current = makeIdempotencyKey();
@@ -791,15 +797,6 @@ export default function Home() {
                 </Card>
               </div>
             </aside>
-          </div>
-
-          <div className="grid gap-6 xl:grid-cols-12">
-            <div id="orders-section" className="min-w-0 scroll-mt-20 xl:col-span-7">
-              <OrdersPanel orders={orders} />
-            </div>
-            <div id="assistant-section" className="min-w-0 scroll-mt-20 xl:col-span-5">
-              <SalesAssistantPanel orders={orders} menu={menu} />
-            </div>
           </div>
         </div>
       )}

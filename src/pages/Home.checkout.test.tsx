@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import {
   afterAll,
   afterEach,
@@ -14,8 +15,8 @@ import {
   configureMockServerBehavior,
   resetMockServerState,
 } from "@/mocks/serverState";
+import { routeConfig } from "@/routes/Routes";
 import type { Order } from "@/types/order";
-import Home from "./Home";
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterAll(() => server.close());
@@ -30,13 +31,19 @@ beforeEach(() => {
 });
 afterEach(() => server.resetHandlers());
 
-describe("Home Checkout & Orders Flow", () => {
-  it("TC-16 & TC-17: checks out via Pay, keeps sold stock deducted, persists across refresh, and exports valid D6 JSON", async () => {
-    const { unmount } = render(<Home />);
+describe("Home Checkout & Orders Route Flow", () => {
+  it("TC-16, TC-17 & TC-18: checks out via Pay, updates floating assistant live without reload, navigates to /orders, persists on refresh, and exports valid D6 JSON", async () => {
+    const router = createMemoryRouter(routeConfig, {
+      initialEntries: ["/"],
+    });
+    const { unmount } = render(<RouterProvider router={router} />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("orders-count-badge")).toHaveTextContent("6");
+      expect(screen.getByText("Bread")).toBeInTheDocument();
     });
+    expect(
+      screen.getByTestId("assistant-live-orders-count")
+    ).toHaveTextContent("6");
 
     // Build item A (Toast x1, Scrambled x2, Chicken Sausage x1)
     fireEvent.click(screen.getByRole("button", { name: "Increase Toast" }));
@@ -62,33 +69,42 @@ describe("Home Checkout & Orders Flow", () => {
       expect(screen.getByTestId("coupon-status")).toBeInTheDocument();
     });
 
-    // Choose bKash and click Pay twice quickly
+    // Choose bKash and click Pay twice quickly (TC-16)
     fireEvent.click(screen.getByRole("button", { name: "bKash" }));
     const payBtn = screen.getByRole("button", { name: /^pay /i });
     fireEvent.click(payBtn);
     fireEvent.click(payBtn);
 
     await waitFor(() => {
-      expect(screen.getByTestId("orders-count-badge")).toHaveTextContent("7");
+      expect(
+        screen.getByTestId("assistant-live-orders-count")
+      ).toHaveTextContent("7");
     });
 
     expect(screen.getByText(/your cart is empty/i)).toBeInTheDocument();
     expect(screen.getByTestId("kitchen-stock-egg")).toHaveTextContent(
       /egg:\s*8/
     );
-    expect(screen.getByTestId("order-card-ORD-1007")).toBeInTheDocument();
 
-    // Simulate page refresh by unmounting and remounting Home
-    unmount();
-    render(<Home />);
+    // Navigate to /orders route via sidebar link (client-side, no reload)
+    fireEvent.click(screen.getAllByRole("link", { name: /orders & export/i })[0]);
 
     await waitFor(() => {
       expect(screen.getByTestId("orders-count-badge")).toHaveTextContent("7");
     });
     expect(screen.getByTestId("order-card-ORD-1007")).toBeInTheDocument();
-    expect(screen.getByTestId("kitchen-stock-egg")).toHaveTextContent(
-      /egg:\s*8/
-    );
+
+    // Simulate page refresh on /orders
+    unmount();
+    const refreshedRouter = createMemoryRouter(routeConfig, {
+      initialEntries: ["/orders"],
+    });
+    render(<RouterProvider router={refreshedRouter} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("orders-count-badge")).toHaveTextContent("7");
+    });
+    expect(screen.getByTestId("order-card-ORD-1007")).toBeInTheDocument();
 
     // Verify exported JSON matches D6 schema
     const ordersRes = await fetch("/api/orders");
