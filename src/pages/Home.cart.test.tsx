@@ -18,6 +18,7 @@ import Home from "./Home";
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterAll(() => server.close());
 beforeEach(() => {
+  window.localStorage.clear();
   resetMockServerState();
   configureMockServerBehavior({
     priceLatencyMinMs: 0,
@@ -120,5 +121,46 @@ describe("Home Cart & Edit Reservation Flow", () => {
       screen.getByRole("button", { name: /reserve as new item/i })
     ).toBeInTheDocument();
     expect(screen.getByText("Expired")).toBeInTheDocument();
+  });
+
+  it("TC-14: keeps configuration and lets Retry succeed when reserve call fails mid-way", async () => {
+    configureMockServerBehavior({ nextReserveShouldFail: true });
+    render(<Home />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Bread")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Increase Toast" }));
+    fireEvent.click(screen.getByRole("button", { name: "Increase Scrambled" }));
+    fireEvent.click(screen.getByRole("button", { name: "Increase Scrambled" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Increase Chicken Sausage" })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /add to cart/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Reservation failed mid-way/i)
+      ).toBeInTheDocument();
+    });
+    // Stock stayed untouched and user selections are still kept
+    expect(screen.getByTestId("kitchen-stock-egg")).toHaveTextContent(
+      /egg:\s*10/
+    );
+    expect(screen.getByTestId("option-qty-scrambled")).toHaveTextContent("2");
+
+    // Retry succeeds
+    fireEvent.click(
+      screen.getByRole("button", { name: /retry add to cart/i })
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1 item")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("kitchen-stock-egg")).toHaveTextContent(
+      /egg:\s*8/
+    );
   });
 });

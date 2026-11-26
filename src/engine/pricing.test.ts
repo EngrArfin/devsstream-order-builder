@@ -49,6 +49,16 @@ describe("Pricing engine (priceCart)", () => {
     expect(resA.items[0].unitPricePoisha).toBe(38000);
     expect(resB.items[0].unitPricePoisha).toBe(67950);
     expect(resC.items[0].unitPricePoisha).toBe(49000);
+
+    // TC-10 edited B (Omelette x1 + Fried x3) = 643.50 BDT
+    const bEdited = { ...configB, omelette: 1, fried: 3 };
+    const resBEdited = priceCart(
+      { items: [{ quantity: 1, selections: bEdited }] },
+      MENU_FIXTURE,
+      MENU_FIXTURE.promos,
+      "2026-11-25T12:00:00+06:00"
+    );
+    expect(resBEdited.items[0].unitPricePoisha).toBe(64350);
   });
 
   it("TC-06: B x1 + C x2 at 10:59:59 applies MORNING15 (150.00), VAT 75.48, payable 1,585", () => {
