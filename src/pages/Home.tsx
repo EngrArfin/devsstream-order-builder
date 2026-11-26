@@ -738,7 +738,7 @@ export default function Home() {
             </div>
 
             <aside className="min-w-0 space-y-4 lg:col-span-5 xl:col-span-4">
-              <div className="space-y-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
+              <div className="space-y-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1 lg:pb-16">
                 <CartPanel
                   menu={menu}
                   cart={cart}

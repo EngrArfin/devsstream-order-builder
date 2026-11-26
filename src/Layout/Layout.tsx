@@ -132,7 +132,7 @@ const Layout: React.FC = () => {
         {/* Main Content Shell offset by fixed sidebar on desktop */}
         <div className="flex min-h-screen min-w-0 flex-col lg:pl-64">
           <Navbar />
-          <main className="flex-1 pb-20">
+          <main className="flex-1 pb-24">
             <Outlet />
           </main>
           <Footer />

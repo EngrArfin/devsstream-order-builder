@@ -449,7 +449,7 @@ export function OrderBuilder({
       )}
 
       {/* Async Price Preview & Sticky Primary CTA */}
-      <Card className="sticky bottom-3 z-20 border-slate-300/90 bg-white/95 shadow-lg backdrop-blur-md">
+      <Card className="sticky bottom-20 z-20 border-slate-300/90 bg-white/95 shadow-lg backdrop-blur-md lg:bottom-3">
         <CardContent className="flex flex-col gap-4 pt-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
